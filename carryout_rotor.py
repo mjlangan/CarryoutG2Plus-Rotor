@@ -23,8 +23,8 @@ carryout = serial.Serial(
 	
 print ('Carryout antenna connected on ', carryout.port)
 
-#carryout.write(bytes(b'q\r')) #go back to root menu in case firmware was left in a submenu
-#carryout.write(bytes(b'\r')) #clear firmware prompt to avoid unknown command errors
+carryout.write(bytes(b'q\r')) #go back to root menu in case firmware was left in a submenu
+carryout.write(bytes(b'\r')) #clear firmware prompt to avoid unknown command errors
 
 def wait_for_angle(motor_id, angle):
 	if motor_id not in (0, 1):
