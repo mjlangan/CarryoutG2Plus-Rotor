@@ -4,7 +4,9 @@
 #Edits by Michael Langan 2026
 
 import serial
-import socket 
+import signal
+import socket
+import sys 
 import regex as re
 
 #initialize some variables
@@ -68,6 +70,26 @@ def home_motors(debug=False):
 		if re.search(r"AZ\s*-\s*Angle:\s*1\s*Wrap:\s*0", text):
 			return
 
+def cleanup_and_exit(signum=None, frame=None):
+    print('\nReceived termination signal, cleaning up...')
+    try:
+        conn.close()
+    except:
+        pass
+    try:
+        client_socket.close()
+    except:
+        pass
+    try:
+        carryout.close()
+    except:
+        pass
+    print('Connections closed, exiting')
+    sys.exit(0)
+
+# Register signal handlers
+signal.signal(signal.SIGINT, cleanup_and_exit)
+signal.signal(signal.SIGTERM, cleanup_and_exit)
 
 #listen to local port for rotctld commands
 listen_ip = '127.0.0.1'  #listen on localhost
@@ -83,66 +105,73 @@ current_az = 0.0
 current_el = 65.0
 
 print ('Listening for rotor commands on', listen_ip, ':', listen_port)
-conn, addr = client_socket.accept()
-print ('Connection from ',addr)
-
 
 #Would be nice to get initial / resting position from Carryout firmware
 #I have not found a way to do this, just live position while motors are running
 
-
-#pass rotor commands to Carryout
-while 1:
-	data = conn.recv(100)  #get Gpredict's message
-	if not data:
-		break
-		
-	cmd = data.decode("utf-8").strip().split(" ")   #grab the incoming command
+#Main loop to accept multiple connections
+while True:
+	conn, addr = client_socket.accept()
+	print ('Connection from ',addr)
 	
-	#print("Received: ",cmd)    #debugging, what did Gpredict send?
-	
-	if cmd[0] == "p":   #Gpredict is requesting current position
-		response = "{}\n{}\n".format(current_az, current_el)
-		conn.send(response.encode('utf-8'))
-		
-	elif cmd[0] == "P":   #Gpredict is sending desired position
-		target_az = float(cmd[1])
-		target_el = float(cmd[2])
-		print(' Move antenna to:', target_az, ' ', target_el, end="\r")
-
-		#open the Carryout's MOT menu
-		carryout.write(bytes(b'mot\r'))
-		
-		
-		#tell Carryout to move to target azimuth
-		command = ('a 0 ' + str(target_az) + '\r').encode('ascii')
-		print('Sending:', command)
-		carryout.write(command)
-		wait_for_angle(0, target_az)
-
-		#tell Carryout to move to target elevation
-		command = ('a 1 ' + str(target_el) + '\r').encode('ascii')
-		print('Sending:', command)
-		carryout.write(command)
-		wait_for_angle(1, target_el)
-
-		current_az = target_az
-		current_el = target_el
+	#pass rotor commands to Carryout
+	while 1:
+		data = conn.recv(100)  #get Gpredict's message
+		if not data:
+			break  #Connection closed by client
 			
-		#Tell Gpredict things went correctly
-		response="RPRT 0\n "  #Everything's under control, situation normal
-		conn.send(response.encode('utf-8'))
-					
-		carryout.write(bytes(b'q\r')) #go back to Carryout's root menu
+		cmd = data.decode("utf-8").strip().split(" ")   #grab the incoming command
 		
+		#print("Received: ",cmd)    #debugging, what did Gpredict send?
 		
-	elif cmd[0] == "S": #Gpredict says to stop
-		print('Gpredict disconnected, exiting') #Do we want to do something else with this?
-		conn.close()
-		carryout.close()
-		exit()
-	else:
-		print('Exiting')
-		conn.close()
-		carryout.close()
-		exit()
+		if cmd[0] == "p":   #Gpredict is requesting current position
+			response = "{}\n{}\n".format(current_az, current_el)
+			conn.send(response.encode('utf-8'))
+			
+		elif cmd[0] == "P":   #Gpredict is sending desired position
+			target_az = float(cmd[1])
+			target_el = float(cmd[2])
+			print(' Move antenna to:', target_az, ' ', target_el, end="\r")
+
+			#open the Carryout's MOT menu
+			carryout.write(bytes(b'mot\r'))
+			
+			
+			#tell Carryout to move to target azimuth
+			command = ('a 0 ' + str(target_az) + '\r').encode('ascii')
+			print('Sending:', command)
+			carryout.write(command)
+			wait_for_angle(0, target_az)
+
+			#tell Carryout to move to target elevation
+			command = ('a 1 ' + str(target_el) + '\r').encode('ascii')
+			print('Sending:', command)
+			carryout.write(command)
+			wait_for_angle(1, target_el)
+
+			current_az = target_az
+			current_el = target_el
+				
+			#Tell Gpredict things went correctly
+			response="RPRT 0\n "  #Everything's under control, situation normal
+			conn.send(response.encode('utf-8'))
+						
+			carryout.write(bytes(b'q\r')) #go back to Carryout's root menu
+			
+			
+		elif cmd[0] == "S": #Gpredict says to stop
+			print('Received stop command from Gpredict')
+			response="RPRT 0\n"
+			conn.send(response.encode('utf-8'))
+		elif cmd[0] == "q": #Gpredict wants to quit/disconnect
+			print('Received quit command from Gpredict')
+			response="RPRT 0\n"
+			conn.send(response.encode('utf-8'))
+			break  #Exit the loop and close connection
+		else:
+			print('Received unknown command from Gpredict: ', cmd[0])
+			response="RPRT -1\n"  #Send error response for unknown command
+			conn.send(response.encode('utf-8'))
+	
+	conn.close()
+	print('Connection closed, waiting for new connection...')
